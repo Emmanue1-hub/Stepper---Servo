@@ -1,33 +1,43 @@
 #include <Stepper.h>
 
-// Configuración del motor
-const int stepsPerRevolution = 2048;
-const float gearRatio = 5.692;
-Stepper myStepper(stepsPerRevolution, 8, 10, 9, 11);
+// Configuración del motor 28BYJ-48
+const int stepsPerRevolution = 2048;  // Medio paso para mayor precisión
+const float gearRatio = 64.0;        // Relación de engranajes real del motor
+Stepper myStepper(stepsPerRevolution, 8, 10, 9, 11);  // Pines ULN2003
 
-// Sensor IR
+// Sensor IR para homing
 const int sensorIRPin = 2;
-bool systemEnabled = false;
-bool homingDone = false;
-long currentPositionSteps = 0;
 
-// Comandos (simples strings como especificaste)
+// Estados del sistema
+volatile bool systemEnabled = false;  // 'volatile' para acceso seguro en interrupciones
+bool homingDone = false;
+long currentPositionSteps = 0;        // Posición absoluta en pasos
+
+// Comandos seriales
 const String CMD_START = "bg";
 const String CMD_STOP = "sp";
 const String CMD_HOMING = "h";
 
-// Velocidad
-const int motorRPM = 8;
-const unsigned long debounceDelay = 50;
+// Configuración de movimiento
+const int motorRPM = 8;               // Velocidad óptima para 28BYJ-48 con carga
+const unsigned long debounceDelay = 50;  // Tiempo antirrebote para sensor IR
+const unsigned long homingTimeout = 30000;  // Timeout de homing (30 segundos)
 
 void setup() {
+  // Configuración inicial
   pinMode(sensorIRPin, INPUT_PULLUP);
   Serial.begin(9600);
+  while (!Serial);  // Esperar conexión serial (solo para algunas placas)
   myStepper.setSpeed(motorRPM);
   Serial.println("SYSTEM_OFF");  // Estado inicial
 }
 
 void loop() {
+  // Verificar comandos seriales continuamente
+  checkSerialCommands();
+}
+
+void checkSerialCommands() {
   if (Serial.available() > 0) {
     String input = Serial.readStringUntil('\n');
     input.trim();
@@ -35,7 +45,7 @@ void loop() {
     // Comando START
     if (input == CMD_START) {
       systemEnabled = true;
-      homingDone = false;  // Reset homing al iniciar
+      homingDone = false;
       Serial.println("SYSTEM_ON");
     }
     // Comando STOP
@@ -43,21 +53,18 @@ void loop() {
       systemEnabled = false;
       Serial.println("SYSTEM_OFF");
     }
-    // Comando HOMING (solo si sistema activado)
+    // Comando HOMING
     else if (input == CMD_HOMING && systemEnabled) {
       performHoming();
     }
-    // Comando de GRADOS (solo número)
+    // Comando de movimiento (solo número)
     else if (systemEnabled && homingDone && isNumeric(input)) {
-      float degrees = input.toFloat();
-      moveToDegrees(degrees);
-      Serial.print("POSITION:");
-      Serial.println(currentPositionSteps);
+      moveToDegrees(input.toFloat());
     }
   }
 }
 
-// Función auxiliar para verificar si es número
+// Función para verificar si un string es numérico
 bool isNumeric(String str) {
   for (char c : str) {
     if (!isdigit(c) && c != '.' && c != '-') {
@@ -68,40 +75,77 @@ bool isNumeric(String str) {
 }
 
 void performHoming() {
+  Serial.println("HOMING_START");
+  unsigned long startTime = millis();
   unsigned long lastDebounceTime = 0;
   bool sensorState = digitalRead(sensorIRPin);
   
-  Serial.println("HOMING_START");
-  
   while (systemEnabled) {
-    bool currentState = digitalRead(sensorIRPin);
+    // 1. Verificar timeout
+    if (millis() - startTime > homingTimeout) {
+      Serial.println("ERROR: Homing timeout");
+      systemEnabled = false;
+      Serial.println("SYSTEM_OFF");
+      return;
+    }
     
+    // 2. Verificar comandos seriales (para stop inmediato)
+    checkSerialCommands();
+    if (!systemEnabled) {
+      Serial.println("HOMING_ABORTED");
+      return;
+    }
+    
+    // 3. Lógica de detección del sensor con debounce
+    bool currentState = digitalRead(sensorIRPin);
     if (currentState != sensorState) {
       lastDebounceTime = millis();
       sensorState = currentState;
     }
     
+    // 4. Si el sensor está activado y pasó el tiempo de debounce
     if (sensorState == LOW && (millis() - lastDebounceTime) > debounceDelay) {
-      break;
+      currentPositionSteps = 0;
+      homingDone = true;
+      Serial.println("HOMING_DONE");
+      return;
     }
     
+    // 5. Movimiento continuo del motor
     myStepper.step(1);
     currentPositionSteps++;
+    
+    // Pequeña pausa para no saturar el procesador
+    delay(1);
+  }
+  
+  Serial.println("HOMING_ABORTED");
+}
+
+void moveToDegrees(float degrees) {
+  Serial.println("MOVEMENT_START");
+  long targetSteps = round((degrees / 360.0) * stepsPerRevolution * gearRatio);
+  long stepsRemaining = targetSteps - currentPositionSteps;
+  int stepDirection = (stepsRemaining > 0) ? 1 : -1;
+  
+  while (stepsRemaining != 0 && systemEnabled) {
+    // Verificar comandos seriales periódicamente
+    if (millis() % 100 == 0) {  // Cada 100ms
+      checkSerialCommands();
+    }
+    
+    myStepper.step(stepDirection);
+    currentPositionSteps += stepDirection;
+    stepsRemaining -= stepDirection;
+    
+    // Pequeña pausa para no saturar el procesador
     delay(1);
   }
   
   if (systemEnabled) {
-    currentPositionSteps = 0;
-    homingDone = true;
-    Serial.println("HOMING_DONE");
+    Serial.print("POSITION:");
+    Serial.println(currentPositionSteps);
+  } else {
+    Serial.println("MOVEMENT_ABORTED");
   }
-}
-
-void moveToDegrees(float degrees) {
-  long targetSteps = round((degrees / 360.0) * stepsPerRevolution * gearRatio);
-  long stepsToMove = targetSteps - currentPositionSteps;
-  
-  // Prioridad horaria excepto en retrocesos explícitos
-  myStepper.step(stepsToMove);
-  currentPositionSteps = targetSteps;
 }

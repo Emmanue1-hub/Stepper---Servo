@@ -2,7 +2,7 @@
 
 // Configuración del motor
 const int stepsPerRevolution = 2048;
-const float gearRatio = 64.0;
+const float gearRatio = 5.692;
 Stepper myStepper(stepsPerRevolution, 8, 10, 9, 11);
 
 // Sensor IR

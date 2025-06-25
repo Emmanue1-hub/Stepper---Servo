@@ -2,7 +2,7 @@
 
 // Configuración del motor 28BYJ-48
 const int stepsPerRevolution = 2048;  // Medio paso para mayor precisión
-const float gearRatio = 64.0;        // Relación de engranajes real del motor
+const float gearRatio = 2048.0 / 3600.0;        // Relación de engranajes real del motor
 Stepper myStepper(stepsPerRevolution, 8, 10, 9, 11);  // Pines ULN2003
 
 // Sensor IR para homing
@@ -19,9 +19,8 @@ const String CMD_STOP = "sp";
 const String CMD_HOMING = "h";
 
 // Configuración de movimiento
-const int motorRPM = 8;               // Velocidad óptima para 28BYJ-48 con carga
+const int motorRPM = 12;               // Velocidad óptima para 28BYJ-48 con carga
 const unsigned long debounceDelay = 50;  // Tiempo antirrebote para sensor IR
-const unsigned long homingTimeout = 30000;  // Timeout de homing (30 segundos)
 
 void setup() {
   // Configuración inicial
@@ -81,13 +80,6 @@ void performHoming() {
   bool sensorState = digitalRead(sensorIRPin);
   
   while (systemEnabled) {
-    // 1. Verificar timeout
-    if (millis() - startTime > homingTimeout) {
-      Serial.println("ERROR: Homing timeout");
-      systemEnabled = false;
-      Serial.println("SYSTEM_OFF");
-      return;
-    }
     
     // 2. Verificar comandos seriales (para stop inmediato)
     checkSerialCommands();
@@ -124,7 +116,7 @@ void performHoming() {
 
 void moveToDegrees(float degrees) {
   Serial.println("MOVEMENT_START");
-  long targetSteps = round((degrees / 360.0) * stepsPerRevolution * gearRatio);
+  long targetSteps = round((degrees / 360.0) * stepsPerRevolution / gearRatio);
   long stepsRemaining = targetSteps - currentPositionSteps;
   int stepDirection = (stepsRemaining > 0) ? 1 : -1;
   

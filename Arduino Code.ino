@@ -2,7 +2,7 @@
 
 // Configuración del motor 28BYJ-48
 const int stepsPerRevolution = 2048;  // Medio paso para mayor precisión
-const float gearRatio = 2048.0 / 3600.0;        // Relación de engranajes real del motor
+const float gearRatio = 3600 / 2048;        // Relación de engranajes real del motor
 Stepper myStepper(stepsPerRevolution, 8, 10, 9, 11);  // Pines ULN2003
 
 // Sensor IR para homing
